@@ -263,10 +263,9 @@ async function processPhoto(file) {
   try {
     await setProgress('Отправляю фото в Gemini…', 10);
 
-    const [image, payload] = await Promise.all([
-      loadImageFromFile(file),
-      preparePhotoPayload(file),
-    ]);
+    await setProgress('Готовлю фото…', 18);
+    const payload = await preparePhotoPayload(file);
+    const image = payload.image;
 
     await setProgress('Gemini строит сцену…', 40);
     const { scene: sceneData, model } = await fetchGeminiScene(payload);
