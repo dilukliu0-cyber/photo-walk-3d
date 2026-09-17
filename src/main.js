@@ -4,6 +4,38 @@ import { estimateDepth } from './depth.js';
 import { buildDepthMesh } from './mesh.js';
 import { createFPSControls } from './controls.js';
 
+// --- Global error banner (boot safety) ---
+function ensureErrorBanner() {
+  let el = document.getElementById('boot-error');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'boot-error';
+  el.setAttribute('role', 'alert');
+  el.style.cssText =
+    'display:none;position:fixed;left:12px;right:12px;top:12px;z-index:99999;' +
+    'background:#3a1218;border:1px solid #ff6b7a;color:#ffe4e8;padding:12px 14px;' +
+    'border-radius:10px;font:600 14px/1.4 system-ui,sans-serif;white-space:pre-wrap;' +
+    'box-shadow:0 12px 40px rgba(0,0,0,.45);max-height:40vh;overflow:auto;';
+  document.body.appendChild(el);
+  return el;
+}
+
+function showBootError(msg) {
+  const el = ensureErrorBanner();
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+
+window.addEventListener('error', (ev) => {
+  const m = ev?.error?.message || ev?.message || String(ev);
+  showBootError(`Ошибка страницы: ${m}`);
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  const r = ev?.reason;
+  const m = r?.message || String(r);
+  showBootError(`Ошибка: ${m}`);
+});
+
 const canvas = document.getElementById('c');
 const overlay = document.getElementById('overlay');
 const fileInput = document.getElementById('file-input');
@@ -11,51 +43,39 @@ const uploadBtn = document.getElementById('upload-btn');
 const progressWrap = document.getElementById('progress-wrap');
 const progressBar = document.getElementById('progress-bar');
 const progressLabel = document.getElementById('progress-label');
+const loadingOverlay = document.getElementById('loading-overlay');
+const loadingText = document.getElementById('loading-text');
 const hud = document.getElementById('hud');
 const btnReset = document.getElementById('btn-reset');
 const btnNew = document.getElementById('btn-new');
 const hint = document.getElementById('hint');
 const stepEls = [1, 2, 3, 4].map((n) => document.getElementById(`step-${n}`));
 
-// --- Renderer / scene ---
-const renderer = new THREE.WebGLRenderer({
-  canvas,
-  antialias: true,
-  powerPreference: 'high-performance',
-});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+function showLoadingUI(text) {
+  const msg = text || 'Обработка…';
+  if (loadingOverlay) {
+    loadingOverlay.classList.remove('hidden');
+    loadingOverlay.setAttribute('aria-hidden', 'false');
+  }
+  if (loadingText) loadingText.textContent = msg;
+  if (progressWrap) progressWrap.classList.remove('hidden');
+  if (progressLabel) {
+    progressLabel.classList.remove('error');
+    progressLabel.textContent = msg;
+  }
+  if (progressBar) progressBar.style.width = '2%';
+  setStepState(1);
+  // Force reflow so first paint happens before any await / heavy work
+  if (progressWrap) void progressWrap.offsetHeight;
+  if (loadingOverlay) void loadingOverlay.offsetHeight;
+}
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050608);
-scene.fog = new THREE.FogExp2(0x050608, 0.012);
-
-const camera = new THREE.PerspectiveCamera(
-  70,
-  window.innerWidth / window.innerHeight,
-  0.05,
-  80
-);
-camera.position.set(0, 1.6, 3);
-
-const hemi = new THREE.HemisphereLight(0xdde6ff, 0x1a1510, 1.15);
-scene.add(hemi);
-const dir = new THREE.DirectionalLight(0xffffff, 0.55);
-dir.position.set(2, 6, 4);
-scene.add(dir);
-const fill = new THREE.AmbientLight(0x404860, 0.35);
-scene.add(fill);
-
-const fps = createFPSControls(camera, document.body);
-
-let photoMesh = null;
-let spawnPos = new THREE.Vector3(0, 1.6, 3);
-let lookTarget = new THREE.Vector3(0, 1.55, 0);
-let bounds = {};
-let playing = false;
+function hideLoadingOverlay() {
+  if (loadingOverlay) {
+    loadingOverlay.classList.add('hidden');
+    loadingOverlay.setAttribute('aria-hidden', 'true');
+  }
+}
 
 /** Let the browser paint progress UI before heavy sync work. */
 function yieldToUI() {
@@ -64,7 +84,7 @@ function yieldToUI() {
 
 function setBusy(busy) {
   uploadBtn?.classList.toggle('busy', busy);
-  fileInput.disabled = busy;
+  if (fileInput) fileInput.disabled = busy;
 }
 
 function setStepState(activeStep) {
@@ -82,7 +102,7 @@ function setStepState(activeStep) {
 
 function stepFromProgress(msg, pct) {
   const m = String(msg || '').toLowerCase();
-  if (pct >= 100 || m.includes('готово') && m.includes('3d')) return 5;
+  if (pct >= 100 || (m.includes('готово') && m.includes('3d'))) return 5;
   if (
     m.includes('меш') ||
     m.includes('3d') ||
@@ -111,30 +131,55 @@ function stepFromProgress(msg, pct) {
 }
 
 async function setProgress(msg, pct) {
-  progressWrap.classList.remove('hidden');
-  progressLabel.classList.remove('error');
-  progressLabel.textContent = msg;
-  progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  progressWrap?.classList.remove('hidden');
+  if (progressLabel) {
+    progressLabel.classList.remove('error');
+    progressLabel.textContent = msg;
+  }
+  if (progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  if (loadingText) loadingText.textContent = msg;
+  if (loadingOverlay) {
+    loadingOverlay.classList.remove('hidden');
+    loadingOverlay.setAttribute('aria-hidden', 'false');
+  }
   setStepState(stepFromProgress(msg, pct));
   await yieldToUI();
 }
 
 function resetProgressUI() {
-  progressBar.style.width = '0%';
-  progressLabel.classList.remove('error');
-  progressLabel.textContent = 'Загрузка…';
+  if (progressBar) progressBar.style.width = '0%';
+  if (progressLabel) {
+    progressLabel.classList.remove('error');
+    progressLabel.textContent = 'Загрузка…';
+  }
+  if (loadingText) loadingText.textContent = 'Обработка…';
   setStepState(1);
 }
 
 function loadImageFromFile(file) {
   return new Promise((resolve, reject) => {
+    if (!file || !file.size) {
+      reject(
+        new Error(
+          'Не удалось прочитать фото. Если это HEIC/iPhone — сохрани как JPG/PNG.'
+        )
+      );
+      return;
+    }
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(url);
       resolve(img);
     };
-    img.onerror = reject;
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(
+        new Error(
+          'Не удалось прочитать фото. Если это HEIC/iPhone — сохрани как JPG/PNG.'
+        )
+      );
+    };
     img.src = url;
   });
 }
@@ -152,8 +197,72 @@ function makeInferenceCanvas(img, maxSide = 512) {
   return c;
 }
 
+// --- Renderer / scene (isolated so listener setup still runs if this fails) ---
+let renderer;
+let scene;
+let camera;
+let fps;
+let photoMesh = null;
+let spawnPos = new THREE.Vector3(0, 1.6, 3);
+let lookTarget = new THREE.Vector3(0, 1.55, 0);
+let bounds = {};
+let playing = false;
+let threeReady = false;
+
+function initThree() {
+  renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    powerPreference: 'high-performance',
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x050608);
+  scene.fog = new THREE.FogExp2(0x050608, 0.012);
+
+  camera = new THREE.PerspectiveCamera(
+    70,
+    window.innerWidth / window.innerHeight,
+    0.05,
+    80
+  );
+  camera.position.set(0, 1.6, 3);
+
+  const hemi = new THREE.HemisphereLight(0xdde6ff, 0x1a1510, 1.15);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.55);
+  dir.position.set(2, 6, 4);
+  scene.add(dir);
+  const fill = new THREE.AmbientLight(0x404860, 0.35);
+  scene.add(fill);
+
+  fps = createFPSControls(camera, document.body);
+  threeReady = true;
+
+  fps.controls.addEventListener('lock', () => {
+    if (hint) hint.style.opacity = '0.35';
+  });
+  fps.controls.addEventListener('unlock', () => {
+    if (hint) hint.style.opacity = '1';
+  });
+
+  const clock = new THREE.Clock();
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta(), 0.05);
+    if (playing && fps) fps.update(dt, bounds);
+    if (renderer && scene && camera) renderer.render(scene, camera);
+  }
+  animate();
+}
+
 function disposePhotoMesh() {
-  if (!photoMesh) return;
+  if (!photoMesh || !scene) return;
   scene.remove(photoMesh);
   photoMesh.geometry.dispose();
   if (photoMesh.material.map) photoMesh.material.map.dispose();
@@ -164,8 +273,7 @@ function disposePhotoMesh() {
 async function processPhoto(file) {
   setBusy(true);
   resetProgressUI();
-  progressWrap.classList.remove('hidden');
-  await setProgress('Читаю фото…', 2);
+  showLoadingUI('Читаю фото…');
 
   try {
     const image = await loadImageFromFile(file);
@@ -176,6 +284,10 @@ async function processPhoto(file) {
     const depthMap = await estimateDepth(inferCanvas, setProgress);
 
     await setProgress('Строю 3D…', 99);
+
+    if (!threeReady) {
+      throw new Error('3D-движок не инициализирован. Обновите страницу.');
+    }
 
     disposePhotoMesh();
 
@@ -199,6 +311,7 @@ async function processPhoto(file) {
     };
 
     playing = true;
+    hideLoadingOverlay();
     overlay.classList.add('fade-out');
     setTimeout(() => {
       overlay.classList.add('hidden');
@@ -218,78 +331,87 @@ async function processPhoto(file) {
 
     await setProgress('Готово', 100);
     setStepState(5);
+    hideLoadingOverlay();
   } catch (err) {
     console.error(err);
     const msg = `Ошибка: ${err?.message || err}`;
-    progressWrap.classList.remove('hidden');
-    progressLabel.classList.add('error');
-    progressLabel.textContent = msg;
-    progressBar.style.width = '0%';
+    hideLoadingOverlay();
+    progressWrap?.classList.remove('hidden');
+    if (progressLabel) {
+      progressLabel.classList.add('error');
+      progressLabel.textContent = msg;
+    }
+    if (progressBar) progressBar.style.width = '0%';
     setStepState(1);
-    // Keep visible on card; alert is optional backup
+    showBootError(msg);
   } finally {
     setBusy(false);
   }
 }
 
 function onCanvasClick() {
-  if (playing) fps.lock();
+  if (playing && fps) fps.lock();
 }
 
-fileInput.addEventListener('change', (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  // Show feedback immediately (before async work)
-  setBusy(true);
-  progressWrap.classList.remove('hidden');
-  progressLabel.classList.remove('error');
-  progressLabel.textContent = 'Читаю фото…';
-  progressBar.style.width = '2%';
-  setStepState(1);
-  processPhoto(file);
-  fileInput.value = '';
-});
+function setupListeners() {
+  fileInput?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // SYNCHRONOUS — before any await — show fullscreen loading + progress
+    setBusy(true);
+    showLoadingUI('Читаю фото…');
+    void processPhoto(file);
+    fileInput.value = '';
+  });
 
-btnReset.addEventListener('click', () => {
-  if (!playing) return;
-  fps.reset(spawnPos, lookTarget);
-});
+  btnReset?.addEventListener('click', () => {
+    if (!playing || !fps) return;
+    fps.reset(spawnPos, lookTarget);
+  });
 
-btnNew.addEventListener('click', () => {
-  playing = false;
-  fps.unlock();
-  fps.enableTouchUI(false);
-  canvas.removeEventListener('click', onCanvasClick);
-  hud.classList.add('hidden');
-  overlay.classList.remove('hidden');
-  progressWrap.classList.add('hidden');
-  progressBar.style.width = '0%';
-  progressLabel.classList.remove('error');
-  setBusy(false);
-  disposePhotoMesh();
-});
+  btnNew?.addEventListener('click', () => {
+    playing = false;
+    try {
+      fps?.unlock();
+      fps?.enableTouchUI(false);
+    } catch (_) {
+      /* ignore */
+    }
+    canvas?.removeEventListener('click', onCanvasClick);
+    hud?.classList.add('hidden');
+    overlay?.classList.remove('hidden');
+    progressWrap?.classList.add('hidden');
+    hideLoadingOverlay();
+    if (progressBar) progressBar.style.width = '0%';
+    if (progressLabel) progressLabel.classList.remove('error');
+    setBusy(false);
+    try {
+      disposePhotoMesh();
+    } catch (_) {
+      /* ignore */
+    }
+  });
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-// Hide hint after first lock
-fps.controls.addEventListener('lock', () => {
-  if (hint) hint.style.opacity = '0.35';
-});
-fps.controls.addEventListener('unlock', () => {
-  if (hint) hint.style.opacity = '1';
-});
-
-const clock = new THREE.Clock();
-
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05);
-  if (playing) fps.update(dt, bounds);
-  renderer.render(scene, camera);
+  window.addEventListener('resize', () => {
+    if (!camera || !renderer) return;
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
 }
-animate();
+
+// Always attach UI listeners even if 3D init partially fails
+try {
+  setupListeners();
+} catch (err) {
+  console.error(err);
+  showBootError(`Не удалось привязать интерфейс: ${err?.message || err}`);
+}
+
+try {
+  initThree();
+} catch (err) {
+  console.error(err);
+  showBootError(`Ошибка 3D: ${err?.message || err}. Выбор фото всё ещё должен работать.`);
+}

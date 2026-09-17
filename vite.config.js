@@ -11,6 +11,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 3000,
   },
   optimizeDeps: {
-    exclude: ['@xenova/transformers'],
+    // Keep ort-web out of Vite prebundle — registerBackend breaks under deps optimizer.
+    exclude: ['@xenova/transformers', 'onnxruntime-web'],
+  },
+  worker: {
+    format: 'es',
   },
 });
