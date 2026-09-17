@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Прогулка по фото — 3D</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="c"></canvas>
+
+      <div id="overlay" class="panel">
+        <div class="card">
+          <h1>Прогулка по фото</h1>
+          <p class="lead">
+            Загрузите фото комнаты — браузер оценит глубину и построит
+            приближённую 3D-сцену. Можно ходить и смотреть вокруг.
+          </p>
+          <p class="note">
+            ⚠️ Одно фото ≈ приближённый 3D, не LiDAR. Результат зависит от
+            ракурса и освещения.
+          </p>
+
+          <label class="upload-btn" for="file-input">
+            <span>Выбрать фото</span>
+            <input id="file-input" type="file" accept="image/*" hidden />
+          </label>
+
+          <div id="progress-wrap" class="hidden">
+            <div class="progress-label" id="progress-label">Загрузка…</div>
+            <div class="bar"><div id="progress-bar"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="hud" class="hidden">
+        <div class="hud-top">
+          <button id="btn-reset" type="button" title="Сбросить позицию">⌂</button>
+          <button id="btn-new" type="button">Новое фото</button>
+        </div>
+        <div id="hint" class="hint">
+          <span class="desktop-only">Клик — захват мыши · WASD — ходьба · Esc — отпустить</span>
+          <span class="mobile-only">Джойстик слева — ходьба · палец справа — взгляд</span>
+        </div>
+      </div>
+
+      <div id="touch-layer" class="hidden" aria-hidden="true">
+        <div id="joystick" class="joystick">
+          <div id="stick" class="stick"></div>
+        </div>
+        <div id="look-zone"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

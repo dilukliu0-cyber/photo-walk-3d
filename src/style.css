@@ -1,0 +1,265 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0d10;
+  --card: #14181f;
+  --border: #2a3140;
+  --text: #e8ecf4;
+  --muted: #9aa3b5;
+  --accent: #5b8cff;
+  --accent-hover: #7aa3ff;
+  --danger: #ffb454;
+  --bar-bg: #1e2430;
+  --bar-fill: #5b8cff;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#c {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: radial-gradient(ellipse at center, #12161e 0%, #07090c 70%);
+  z-index: 10;
+}
+
+.panel.fade-out {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.45s ease;
+}
+
+.card {
+  width: min(440px, 100%);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.75rem 1.5rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+h1 {
+  font-size: 1.55rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.75rem;
+}
+
+.lead {
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 0.95rem;
+  margin-bottom: 0.85rem;
+}
+
+.note {
+  color: var(--danger);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin-bottom: 1.35rem;
+  opacity: 0.95;
+}
+
+.upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.85rem 1rem;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+
+.upload-btn:hover {
+  background: var(--accent-hover);
+}
+
+.upload-btn:active {
+  transform: scale(0.98);
+}
+
+#progress-wrap {
+  margin-top: 1.25rem;
+}
+
+#progress-wrap.hidden {
+  display: none;
+}
+
+.progress-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.45rem;
+}
+
+.bar {
+  height: 8px;
+  background: var(--bar-bg);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+#progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--bar-fill), #8eb0ff);
+  border-radius: 99px;
+  transition: width 0.2s ease;
+}
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+#hud.hidden {
+  display: none;
+}
+
+.hud-top {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.hud-top button {
+  background: rgba(20, 24, 31, 0.85);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.hud-top button:hover {
+  border-color: var(--accent);
+  color: #fff;
+}
+
+#btn-reset {
+  font-size: 1.1rem;
+  padding: 0.35rem 0.65rem;
+}
+
+.hint {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 24, 31, 0.8);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.45rem 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-only {
+  display: none;
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+  .desktop-only {
+    display: none;
+  }
+  .mobile-only {
+    display: inline;
+  }
+}
+
+#touch-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+#touch-layer.hidden {
+  display: none;
+}
+
+#touch-layer.active {
+  pointer-events: auto;
+}
+
+.joystick {
+  position: absolute;
+  left: 28px;
+  bottom: 36px;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.stick {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  border-radius: 50%;
+  background: rgba(91, 140, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  transform: translate(0, 0);
+}
+
+#look-zone {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 55%;
+  height: 100%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.hidden {
+  display: none !important;
+}
