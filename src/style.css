@@ -8,6 +8,8 @@
   --accent: #5b8cff;
   --accent-hover: #7aa3ff;
   --danger: #ffb454;
+  --error: #ff6b7a;
+  --ok: #5ddea0;
   --bar-bg: #1e2430;
   --bar-fill: #5b8cff;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -96,7 +98,7 @@ h1 {
   font-weight: 600;
   font-size: 1rem;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, opacity 0.15s ease;
   user-select: none;
 }
 
@@ -108,25 +110,67 @@ h1 {
   transform: scale(0.98);
 }
 
+.upload-btn.busy {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+  filter: grayscale(0.25);
+}
+
 #progress-wrap {
   margin-top: 1.25rem;
+  padding: 0.95rem 1rem;
+  background: rgba(91, 140, 255, 0.08);
+  border: 1px solid rgba(91, 140, 255, 0.28);
+  border-radius: 12px;
 }
 
 #progress-wrap.hidden {
   display: none;
 }
 
+.progress-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  margin-bottom: 0.65rem;
+}
+
+.spinner {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.15rem;
+  border: 2.5px solid rgba(91, 140, 255, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .progress-label {
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 0.45rem;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--accent-hover);
+  line-height: 1.35;
+  flex: 1;
+}
+
+.progress-label.error {
+  color: var(--error);
 }
 
 .bar {
-  height: 8px;
+  height: 10px;
   background: var(--bar-bg);
   border-radius: 99px;
   overflow: hidden;
+  position: relative;
 }
 
 #progress-bar {
@@ -135,6 +179,70 @@ h1 {
   background: linear-gradient(90deg, var(--bar-fill), #8eb0ff);
   border-radius: 99px;
   transition: width 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+#progress-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.35) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.steps {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+  margin-top: 0.85rem;
+}
+
+.step {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.4rem 0.2rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.2);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.step.pending {
+  opacity: 0.65;
+}
+
+.step.active {
+  color: #fff;
+  border-color: var(--accent);
+  background: rgba(91, 140, 255, 0.22);
+  box-shadow: 0 0 0 1px rgba(91, 140, 255, 0.25);
+  opacity: 1;
+}
+
+.step.done {
+  color: var(--ok);
+  border-color: rgba(93, 222, 160, 0.45);
+  background: rgba(93, 222, 160, 0.12);
+  opacity: 1;
 }
 
 #hud {
@@ -206,6 +314,12 @@ h1 {
   }
   .mobile-only {
     display: inline;
+  }
+  .steps {
+    gap: 0.25rem;
+  }
+  .step {
+    font-size: 0.65rem;
   }
 }
 

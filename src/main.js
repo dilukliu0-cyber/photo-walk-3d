@@ -7,6 +7,7 @@ import { createFPSControls } from './controls.js';
 const canvas = document.getElementById('c');
 const overlay = document.getElementById('overlay');
 const fileInput = document.getElementById('file-input');
+const uploadBtn = document.getElementById('upload-btn');
 const progressWrap = document.getElementById('progress-wrap');
 const progressBar = document.getElementById('progress-bar');
 const progressLabel = document.getElementById('progress-label');
@@ -14,6 +15,7 @@ const hud = document.getElementById('hud');
 const btnReset = document.getElementById('btn-reset');
 const btnNew = document.getElementById('btn-new');
 const hint = document.getElementById('hint');
+const stepEls = [1, 2, 3, 4].map((n) => document.getElementById(`step-${n}`));
 
 // --- Renderer / scene ---
 const renderer = new THREE.WebGLRenderer({
@@ -49,16 +51,79 @@ scene.add(fill);
 
 const fps = createFPSControls(camera, document.body);
 
-let roomMesh = null;
+let photoMesh = null;
 let spawnPos = new THREE.Vector3(0, 1.6, 3);
 let lookTarget = new THREE.Vector3(0, 1.55, 0);
 let bounds = {};
 let playing = false;
 
-function setProgress(msg, pct) {
+/** Let the browser paint progress UI before heavy sync work. */
+function yieldToUI() {
+  return new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+}
+
+function setBusy(busy) {
+  uploadBtn?.classList.toggle('busy', busy);
+  fileInput.disabled = busy;
+}
+
+function setStepState(activeStep) {
+  // activeStep: 1..4 (current), or 5 = all done
+  for (let i = 0; i < stepEls.length; i++) {
+    const el = stepEls[i];
+    if (!el) continue;
+    const n = i + 1;
+    el.classList.remove('pending', 'active', 'done');
+    if (activeStep > n || activeStep >= 5) el.classList.add('done');
+    else if (activeStep === n) el.classList.add('active');
+    else el.classList.add('pending');
+  }
+}
+
+function stepFromProgress(msg, pct) {
+  const m = String(msg || '').toLowerCase();
+  if (pct >= 100 || m.includes('готово') && m.includes('3d')) return 5;
+  if (
+    m.includes('меш') ||
+    m.includes('3d') ||
+    m.includes('построен') ||
+    pct >= 99
+  ) {
+    return 4;
+  }
+  if (
+    m.includes('глубин') ||
+    m.includes('считаю') ||
+    m.includes('оценк') ||
+    (pct >= 95 && pct < 99)
+  ) {
+    return 3;
+  }
+  if (
+    m.includes('модель') ||
+    m.includes('скачива') ||
+    m.includes('загрузка:') ||
+    (pct >= 5 && pct < 95)
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
+async function setProgress(msg, pct) {
   progressWrap.classList.remove('hidden');
+  progressLabel.classList.remove('error');
   progressLabel.textContent = msg;
   progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  setStepState(stepFromProgress(msg, pct));
+  await yieldToUI();
+}
+
+function resetProgressUI() {
+  progressBar.style.width = '0%';
+  progressLabel.classList.remove('error');
+  progressLabel.textContent = 'Загрузка…';
+  setStepState(1);
 }
 
 function loadImageFromFile(file) {
@@ -87,9 +152,22 @@ function makeInferenceCanvas(img, maxSide = 512) {
   return c;
 }
 
+function disposePhotoMesh() {
+  if (!photoMesh) return;
+  scene.remove(photoMesh);
+  photoMesh.geometry.dispose();
+  if (photoMesh.material.map) photoMesh.material.map.dispose();
+  photoMesh.material.dispose();
+  photoMesh = null;
+}
+
 async function processPhoto(file) {
+  setBusy(true);
+  resetProgressUI();
+  progressWrap.classList.remove('hidden');
+  await setProgress('Читаю фото…', 2);
+
   try {
-    setProgress('Чтение фото…', 2);
     const image = await loadImageFromFile(file);
 
     // Full-res texture image stays in `image`; smaller canvas for depth model
@@ -97,24 +175,18 @@ async function processPhoto(file) {
 
     const depthMap = await estimateDepth(inferCanvas, setProgress);
 
-    setProgress('Построение меша…', 99);
+    await setProgress('Строю 3D…', 99);
 
-    if (roomMesh) {
-      scene.remove(roomMesh);
-      roomMesh.geometry.dispose();
-      if (roomMesh.material.map) roomMesh.material.map.dispose();
-      roomMesh.material.dispose();
-      roomMesh = null;
-    }
+    disposePhotoMesh();
 
-    roomMesh = buildDepthMesh(image, depthMap, {
+    photoMesh = buildDepthMesh(image, depthMap, {
       maxSize: 9,
       depthScale: 5.2,
       segments: 160,
     });
-    scene.add(roomMesh);
+    scene.add(photoMesh);
 
-    const { planeW, planeH, depthScale, spawn } = roomMesh.userData;
+    const { planeW, planeH, depthScale, spawn } = photoMesh.userData;
     spawnPos.copy(spawn);
     lookTarget.set(0, 1.55, -depthScale * 0.35);
     fps.reset(spawnPos, lookTarget);
@@ -125,9 +197,6 @@ async function processPhoto(file) {
       minZ: -depthScale - 0.5,
       maxZ: depthScale * 0.35 + 2.5,
     };
-
-    // Soft ground plane for sense of floor (optional visual)
-    // none — photo mesh is the room
 
     playing = true;
     overlay.classList.add('fade-out');
@@ -147,12 +216,19 @@ async function processPhoto(file) {
       canvas.addEventListener('click', onCanvasClick);
     }
 
-    setProgress('Готово', 100);
+    await setProgress('Готово', 100);
+    setStepState(5);
   } catch (err) {
     console.error(err);
-    setProgress(`Ошибка: ${err?.message || err}`, 0);
+    const msg = `Ошибка: ${err?.message || err}`;
+    progressWrap.classList.remove('hidden');
+    progressLabel.classList.add('error');
+    progressLabel.textContent = msg;
     progressBar.style.width = '0%';
-    alert(`Не удалось обработать фото:\n${err?.message || err}`);
+    setStepState(1);
+    // Keep visible on card; alert is optional backup
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -163,6 +239,13 @@ function onCanvasClick() {
 fileInput.addEventListener('change', (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
+  // Show feedback immediately (before async work)
+  setBusy(true);
+  progressWrap.classList.remove('hidden');
+  progressLabel.classList.remove('error');
+  progressLabel.textContent = 'Читаю фото…';
+  progressBar.style.width = '2%';
+  setStepState(1);
   processPhoto(file);
   fileInput.value = '';
 });
@@ -181,13 +264,9 @@ btnNew.addEventListener('click', () => {
   overlay.classList.remove('hidden');
   progressWrap.classList.add('hidden');
   progressBar.style.width = '0%';
-  if (roomMesh) {
-    scene.remove(roomMesh);
-    roomMesh.geometry.dispose();
-    if (roomMesh.material.map) roomMesh.material.map.dispose();
-    roomMesh.material.dispose();
-    roomMesh = null;
-  }
+  progressLabel.classList.remove('error');
+  setBusy(false);
+  disposePhotoMesh();
 });
 
 window.addEventListener('resize', () => {

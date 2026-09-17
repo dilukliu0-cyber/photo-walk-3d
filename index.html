@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Прогулка по фото — 3D</title>
+    <title>Фото → 3D прогулка</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body>
@@ -12,24 +12,34 @@
 
       <div id="overlay" class="panel">
         <div class="card">
-          <h1>Прогулка по фото</h1>
+          <h1>Фото → 3D прогулка</h1>
           <p class="lead">
-            Загрузите фото комнаты — браузер оценит глубину и построит
-            приближённую 3D-сцену. Можно ходить и смотреть вокруг.
+            Любое фото (комната, улица, предмет, пейзаж…) — браузер оценит
+            глубину и построит приближённую 3D-сцену. Можно ходить и смотреть
+            вокруг.
           </p>
           <p class="note">
-            ⚠️ Одно фото ≈ приближённый 3D, не LiDAR. Результат зависит от
-            ракурса и освещения.
+            ⚠️ Приближение по одной фотке, не LiDAR. Качество зависит от фото
+            (ракурс, освещение, резкость).
           </p>
 
-          <label class="upload-btn" for="file-input">
+          <label class="upload-btn" id="upload-btn" for="file-input">
             <span>Выбрать фото</span>
             <input id="file-input" type="file" accept="image/*" hidden />
           </label>
 
           <div id="progress-wrap" class="hidden">
-            <div class="progress-label" id="progress-label">Загрузка…</div>
+            <div class="progress-head">
+              <div class="spinner" id="progress-spinner" aria-hidden="true"></div>
+              <div class="progress-label" id="progress-label">Загрузка…</div>
+            </div>
             <div class="bar"><div id="progress-bar"></div></div>
+            <ol class="steps" id="progress-steps" aria-label="Этапы">
+              <li id="step-1" class="step pending" data-step="1">Загрузка</li>
+              <li id="step-2" class="step pending" data-step="2">Модель</li>
+              <li id="step-3" class="step pending" data-step="3">Глубина</li>
+              <li id="step-4" class="step pending" data-step="4">3D</li>
+            </ol>
           </div>
         </div>
       </div>

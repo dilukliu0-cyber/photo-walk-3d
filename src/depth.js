@@ -10,12 +10,12 @@ env.useBrowserCache = true;
 let estimator = null;
 
 /**
- * @param {(msg: string, pct: number) => void} onProgress
+ * @param {(msg: string, pct: number) => void|Promise<void>} onProgress
  */
 export async function loadDepthModel(onProgress) {
   if (estimator) return estimator;
 
-  onProgress('Загрузка модели глубины…', 5);
+  await onProgress?.('Скачиваю модель глубины…', 5);
 
   estimator = await pipeline(
     'depth-estimation',
@@ -26,15 +26,16 @@ export async function loadDepthModel(onProgress) {
         if (data.status === 'progress' && data.total) {
           const pct = Math.min(90, Math.round((data.loaded / data.total) * 80) + 5);
           const name = data.file ? String(data.file).split('/').pop() : 'модель';
-          onProgress(`Скачивание: ${name}`, pct);
+          // Fire-and-forget so UI can paint between network chunks
+          void onProgress?.(`Загрузка: ${name}`, pct);
         } else if (data.status === 'ready' || data.status === 'done') {
-          onProgress('Модель готова', 92);
+          void onProgress?.('Модель готова', 92);
         }
       },
     }
   );
 
-  onProgress('Модель загружена', 95);
+  await onProgress?.('Модель готова', 94);
   return estimator;
 }
 
@@ -42,11 +43,11 @@ export async function loadDepthModel(onProgress) {
  * Run depth estimation on an HTMLImageElement / canvas / URL.
  * Returns { width, height, data: Float32Array } normalized 0..1 (near=1, far=0 for displace).
  * @param {HTMLImageElement|HTMLCanvasElement|string} input
- * @param {(msg: string, pct: number) => void} onProgress
+ * @param {(msg: string, pct: number) => void|Promise<void>} onProgress
  */
 export async function estimateDepth(input, onProgress) {
   const model = await loadDepthModel(onProgress);
-  onProgress('Оценка глубины…', 96);
+  await onProgress?.('Считаю карту глубины…', 96);
 
   const result = await model(input);
   // result.depth is a RawImage (or similar) with data, width, height
@@ -81,6 +82,6 @@ export async function estimateDepth(input, onProgress) {
     normalized[i] = 1 - (f32[i] - min) / range;
   }
 
-  onProgress('Глубина готова', 100);
+  await onProgress?.('Глубина готова', 98);
   return { width: w, height: h, data: normalized };
 }
