@@ -1,9 +1,32 @@
 import * as THREE from 'three';
 
 /**
+ * Downscale large photos so Gemini JSON is less likely to truncate.
+ */
+export async function resizeImageFile(file, maxSide = 1280, quality = 0.85) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  if (bitmap.close) bitmap.close();
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Не удалось сжать фото'))),
+      'image/jpeg',
+      quality
+    );
+  });
+  const name = String(file.name || 'photo').replace(/\.[^.]+$/, '.jpg');
+  return new File([blob], name, { type: 'image/jpeg' });
+}
+
+/**
  * Read a File as raw base64 (no data: prefix) + mimeType.
- * @param {File} file
- * @returns {Promise<{ imageBase64: string, mimeType: string }>}
  */
 export function fileToBase64Payload(file) {
   return new Promise((resolve, reject) => {
@@ -21,8 +44,7 @@ export function fileToBase64Payload(file) {
       const comma = result.indexOf(',');
       const imageBase64 = comma >= 0 ? result.slice(comma + 1) : result;
       const mimeMatch = /^data:([^;]+);base64,/i.exec(result);
-      const mimeType =
-        mimeMatch?.[1] || file.type || 'image/jpeg';
+      const mimeType = mimeMatch?.[1] || file.type || 'image/jpeg';
       resolve({ imageBase64, mimeType });
     };
     reader.onerror = () =>
@@ -35,10 +57,14 @@ export function fileToBase64Payload(file) {
   });
 }
 
+/** Resize then encode for /api/scene */
+export async function preparePhotoPayload(file) {
+  const resized = await resizeImageFile(file);
+  return fileToBase64Payload(resized);
+}
+
 /**
  * POST photo to Vite middleware /api/scene
- * @param {{ imageBase64: string, mimeType: string }} payload
- * @returns {Promise<{ scene: object, model: string }>}
  */
 export async function fetchGeminiScene(payload) {
   const res = await fetch('/api/scene', {
@@ -85,11 +111,6 @@ function makeShapeGeometry(obj) {
   return new THREE.BoxGeometry(w, h, d);
 }
 
-/**
- * Clear previous Gemini-built group from the scene.
- * @param {THREE.Scene} scene
- * @param {THREE.Object3D|null} group
- */
 export function disposeSceneGroup(scene, group) {
   if (!group || !scene) return;
   scene.remove(group);
@@ -107,29 +128,17 @@ export function disposeSceneGroup(scene, group) {
 
 /**
  * Build walkable Three.js content from Gemini scene JSON + photo texture.
- *
- * @param {THREE.Scene} scene
- * @param {object} sceneData
- * @param {HTMLImageElement} image
- * @returns {{
- *   group: THREE.Group,
- *   spawn: THREE.Vector3,
- *   lookTarget: THREE.Vector3,
- *   bounds: { minX: number, maxX: number, minZ: number, maxZ: number },
- *   title: string,
- *   summary: string
- * }}
  */
 export function buildGeminiScene(scene, sceneData, image) {
   const data = sceneData || {};
   const group = new THREE.Group();
   group.name = 'gemini-scene';
 
-  const sky = parseColor(data.skyColor, 0x87ceeb);
+  const sky = parseColor(data.skyColor || data.sky, 0x87ceeb);
   scene.background = new THREE.Color(sky);
   scene.fog = new THREE.FogExp2(sky, 0.008);
 
-  const groundSpec = data.ground || {};
+  const groundSpec = data.ground || data.floor || {};
   const groundSize = Number(groundSpec.size) || 20;
   const groundY = Number(groundSpec.y) || 0;
   const groundMat = new THREE.MeshStandardMaterial({
@@ -146,7 +155,6 @@ export function buildGeminiScene(scene, sceneData, image) {
   ground.receiveShadow = true;
   group.add(ground);
 
-  // Soft grid helper
   const grid = new THREE.GridHelper(
     groundSize,
     Math.min(40, Math.round(groundSize)),
@@ -158,19 +166,15 @@ export function buildGeminiScene(scene, sceneData, image) {
   grid.material.transparent = true;
   group.add(grid);
 
-  const pp = data.photoPlane || {};
+  const pp = data.photoPlane || data.photo_plane || {};
   const distance = Math.max(2, Number(pp.distance) || 8);
   let planeW = Number(pp.width) || 12;
   let planeH = Number(pp.height) || 8;
   const imgW = image.naturalWidth || image.width || 1;
   const imgH = image.naturalHeight || image.height || 1;
   const aspect = imgW / imgH;
-  // Prefer aspect-correct if Gemini sizes look default-ish
-  if (aspect >= 1) {
-    planeH = planeW / aspect;
-  } else {
-    planeW = planeH * aspect;
-  }
+  if (aspect >= 1) planeH = planeW / aspect;
+  else planeW = planeH * aspect;
 
   const texture = new THREE.Texture(image);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -186,11 +190,9 @@ export function buildGeminiScene(scene, sceneData, image) {
       metalness: 0,
     })
   );
-  // Vertical plane in front of player (negative Z)
   photoMesh.position.set(0, groundY + planeH * 0.5, -distance);
   group.add(photoMesh);
 
-  // Thin backboard behind photo
   const board = new THREE.Mesh(
     new THREE.BoxGeometry(planeW + 0.2, planeH + 0.2, 0.08),
     new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 })
@@ -212,12 +214,7 @@ export function buildGeminiScene(scene, sceneData, image) {
     const y = Number(obj.y);
     const z = Number(obj.z) || 0;
     const h = Math.max(0.05, Number(obj.h) || 0.5);
-    // If y looks like center height, use as-is; else lift by half height
-    mesh.position.set(
-      x,
-      Number.isFinite(y) ? y : groundY + h * 0.5,
-      z
-    );
+    mesh.position.set(x, Number.isFinite(y) ? y : groundY + h * 0.5, z);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     if (obj.name) mesh.name = String(obj.name);
@@ -233,11 +230,7 @@ export function buildGeminiScene(scene, sceneData, image) {
     Number(spawnRaw.z) != null ? Number(spawnRaw.z) : 4
   );
 
-  const lookTarget = new THREE.Vector3(
-    0,
-    photoMesh.position.y,
-    photoMesh.position.z
-  );
+  const lookTarget = new THREE.Vector3(0, photoMesh.position.y, photoMesh.position.z);
 
   const b = data.bounds || {};
   const bounds = {

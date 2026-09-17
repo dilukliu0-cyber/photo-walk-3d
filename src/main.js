@@ -2,7 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { createFPSControls } from './controls.js';
 import {
-  fileToBase64Payload,
+  preparePhotoPayload,
   fetchGeminiScene,
   buildGeminiScene,
   disposeSceneGroup,
@@ -265,7 +265,7 @@ async function processPhoto(file) {
 
     const [image, payload] = await Promise.all([
       loadImageFromFile(file),
-      fileToBase64Payload(file),
+      preparePhotoPayload(file),
     ]);
 
     await setProgress('Gemini строит сцену…', 40);
