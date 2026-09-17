@@ -1,8 +1,12 @@
 import './style.css';
 import * as THREE from 'three';
-import { estimateDepth } from './depth.js';
-import { buildDepthMesh } from './mesh.js';
 import { createFPSControls } from './controls.js';
+import {
+  fileToBase64Payload,
+  fetchGeminiScene,
+  buildGeminiScene,
+  disposeSceneGroup,
+} from './geminiScene.js';
 
 // --- Global error banner (boot safety) ---
 function ensureErrorBanner() {
@@ -24,6 +28,11 @@ function showBootError(msg) {
   const el = ensureErrorBanner();
   el.style.display = 'block';
   el.textContent = msg;
+}
+
+function hideBootError() {
+  const el = document.getElementById('boot-error');
+  if (el) el.style.display = 'none';
 }
 
 window.addEventListener('error', (ev) => {
@@ -65,7 +74,6 @@ function showLoadingUI(text) {
   }
   if (progressBar) progressBar.style.width = '2%';
   setStepState(1);
-  // Force reflow so first paint happens before any await / heavy work
   if (progressWrap) void progressWrap.offsetHeight;
   if (loadingOverlay) void loadingOverlay.offsetHeight;
 }
@@ -77,7 +85,6 @@ function hideLoadingOverlay() {
   }
 }
 
-/** Let the browser paint progress UI before heavy sync work. */
 function yieldToUI() {
   return new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 }
@@ -88,7 +95,6 @@ function setBusy(busy) {
 }
 
 function setStepState(activeStep) {
-  // activeStep: 1..4 (current), or 5 = all done
   for (let i = 0; i < stepEls.length; i++) {
     const el = stepEls[i];
     if (!el) continue;
@@ -102,28 +108,28 @@ function setStepState(activeStep) {
 
 function stepFromProgress(msg, pct) {
   const m = String(msg || '').toLowerCase();
-  if (pct >= 100 || (m.includes('готово') && m.includes('3d'))) return 5;
+  if (pct >= 100 || m.includes('готово')) return 5;
   if (
-    m.includes('меш') ||
+    m.includes('собираю') ||
     m.includes('3d') ||
-    m.includes('построен') ||
-    pct >= 99
+    m.includes('строю') ||
+    pct >= 85
   ) {
     return 4;
   }
   if (
-    m.includes('глубин') ||
-    m.includes('считаю') ||
-    m.includes('оценк') ||
-    (pct >= 95 && pct < 99)
+    m.includes('строит сцен') ||
+    m.includes('gemini строит') ||
+    m.includes('анализ') ||
+    (pct >= 35 && pct < 85)
   ) {
     return 3;
   }
   if (
-    m.includes('модель') ||
-    m.includes('скачива') ||
-    m.includes('загрузка:') ||
-    (pct >= 5 && pct < 95)
+    m.includes('отправляю') ||
+    m.includes('gemini') ||
+    m.includes('сервер') ||
+    (pct >= 5 && pct < 35)
   ) {
     return 2;
   }
@@ -184,25 +190,12 @@ function loadImageFromFile(file) {
   });
 }
 
-/** Downscale large photos for faster inference while keeping texture quality. */
-function makeInferenceCanvas(img, maxSide = 512) {
-  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
-  const w = Math.max(64, Math.round(img.naturalWidth * scale));
-  const h = Math.max(64, Math.round(img.naturalHeight * scale));
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0, 0, w, h);
-  return c;
-}
-
-// --- Renderer / scene (isolated so listener setup still runs if this fails) ---
+// --- Renderer / scene ---
 let renderer;
 let scene;
 let camera;
 let fps;
-let photoMesh = null;
+let sceneGroup = null;
 let spawnPos = new THREE.Vector3(0, 1.6, 3);
 let lookTarget = new THREE.Vector3(0, 1.55, 0);
 let bounds = {};
@@ -229,16 +222,16 @@ function initThree() {
     70,
     window.innerWidth / window.innerHeight,
     0.05,
-    80
+    120
   );
   camera.position.set(0, 1.6, 3);
 
   const hemi = new THREE.HemisphereLight(0xdde6ff, 0x1a1510, 1.15);
   scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.55);
-  dir.position.set(2, 6, 4);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.75);
+  dir.position.set(2, 8, 4);
   scene.add(dir);
-  const fill = new THREE.AmbientLight(0x404860, 0.35);
+  const fill = new THREE.AmbientLight(0x404860, 0.4);
   scene.add(fill);
 
   fps = createFPSControls(camera, document.body);
@@ -261,54 +254,39 @@ function initThree() {
   animate();
 }
 
-function disposePhotoMesh() {
-  if (!photoMesh || !scene) return;
-  scene.remove(photoMesh);
-  photoMesh.geometry.dispose();
-  if (photoMesh.material.map) photoMesh.material.map.dispose();
-  photoMesh.material.dispose();
-  photoMesh = null;
-}
-
 async function processPhoto(file) {
   setBusy(true);
+  hideBootError();
   resetProgressUI();
-  showLoadingUI('Читаю фото…');
+  showLoadingUI('Отправляю фото в Gemini…');
 
   try {
-    const image = await loadImageFromFile(file);
+    await setProgress('Отправляю фото в Gemini…', 10);
 
-    // Full-res texture image stays in `image`; smaller canvas for depth model
-    const inferCanvas = makeInferenceCanvas(image, 518);
+    const [image, payload] = await Promise.all([
+      loadImageFromFile(file),
+      fileToBase64Payload(file),
+    ]);
 
-    const depthMap = await estimateDepth(inferCanvas, setProgress);
+    await setProgress('Gemini строит сцену…', 40);
+    const { scene: sceneData, model } = await fetchGeminiScene(payload);
+    console.info('[gemini] model:', model, 'title:', sceneData?.title);
 
-    await setProgress('Строю 3D…', 99);
+    await setProgress('Собираю 3D…', 88);
 
     if (!threeReady) {
       throw new Error('3D-движок не инициализирован. Обновите страницу.');
     }
 
-    disposePhotoMesh();
+    disposeSceneGroup(scene, sceneGroup);
+    sceneGroup = null;
 
-    photoMesh = buildDepthMesh(image, depthMap, {
-      maxSize: 9,
-      depthScale: 5.2,
-      segments: 160,
-    });
-    scene.add(photoMesh);
-
-    const { planeW, planeH, depthScale, spawn } = photoMesh.userData;
-    spawnPos.copy(spawn);
-    lookTarget.set(0, 1.55, -depthScale * 0.35);
+    const built = buildGeminiScene(scene, sceneData, image);
+    sceneGroup = built.group;
+    spawnPos.copy(built.spawn);
+    lookTarget.copy(built.lookTarget);
+    bounds = built.bounds;
     fps.reset(spawnPos, lookTarget);
-
-    bounds = {
-      minX: -planeW * 0.55,
-      maxX: planeW * 0.55,
-      minZ: -depthScale - 0.5,
-      maxZ: depthScale * 0.35 + 2.5,
-    };
 
     playing = true;
     hideLoadingOverlay();
@@ -321,7 +299,6 @@ async function processPhoto(file) {
 
     fps.enableTouchUI(true);
 
-    // Desktop: click canvas to lock pointer
     const isCoarse =
       window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     if (!isCoarse) {
@@ -329,13 +306,18 @@ async function processPhoto(file) {
       canvas.addEventListener('click', onCanvasClick);
     }
 
-    await setProgress('Готово', 100);
+    const doneMsg = built.summary
+      ? `Готово: ${built.title}`
+      : 'Готово';
+    await setProgress(doneMsg, 100);
     setStepState(5);
     hideLoadingOverlay();
   } catch (err) {
     console.error(err);
     const msg = `Ошибка: ${err?.message || err}`;
     hideLoadingOverlay();
+    // Keep overlay visible so user can retry
+    overlay?.classList.remove('hidden', 'fade-out');
     progressWrap?.classList.remove('hidden');
     if (progressLabel) {
       progressLabel.classList.add('error');
@@ -357,9 +339,8 @@ function setupListeners() {
   fileInput?.addEventListener('change', (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // SYNCHRONOUS — before any await — show fullscreen loading + progress
     setBusy(true);
-    showLoadingUI('Читаю фото…');
+    showLoadingUI('Отправляю фото в Gemini…');
     void processPhoto(file);
     fileInput.value = '';
   });
@@ -382,11 +363,17 @@ function setupListeners() {
     overlay?.classList.remove('hidden');
     progressWrap?.classList.add('hidden');
     hideLoadingOverlay();
+    hideBootError();
     if (progressBar) progressBar.style.width = '0%';
     if (progressLabel) progressLabel.classList.remove('error');
     setBusy(false);
     try {
-      disposePhotoMesh();
+      disposeSceneGroup(scene, sceneGroup);
+      sceneGroup = null;
+      if (scene) {
+        scene.background = new THREE.Color(0x050608);
+        scene.fog = new THREE.FogExp2(0x050608, 0.012);
+      }
     } catch (_) {
       /* ignore */
     }
@@ -401,7 +388,6 @@ function setupListeners() {
   });
 }
 
-// Always attach UI listeners even if 3D init partially fails
 try {
   setupListeners();
 } catch (err) {
@@ -413,5 +399,7 @@ try {
   initThree();
 } catch (err) {
   console.error(err);
-  showBootError(`Ошибка 3D: ${err?.message || err}. Выбор фото всё ещё должен работать.`);
+  showBootError(
+    `Ошибка 3D: ${err?.message || err}. Выбор фото всё ещё должен работать.`
+  );
 }
